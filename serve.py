@@ -6,10 +6,13 @@ from fastapi.responses import JSONResponse
 import tempfile
 from pathlib import Path
 import os
+import shutil
+import urllib.request
 
 from predict import load_model, predict_image_with_model
 
 MODEL_PATH = os.getenv("POTHOLE_MODEL_PATH", "best_pothole_model.pth")
+MODEL_URL = os.getenv("POTHOLE_MODEL_URL")
 DEFAULT_THRESHOLD = float(os.getenv("POTHOLE_THRESHOLD", "0.5"))
 
 MODEL = None
@@ -17,13 +20,36 @@ CLASSES = None
 DEVICE = None
 
 
+def _download_model(url: str, destination_path: str) -> None:
+    dest = Path(destination_path)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    # Download to a temp file first, then move into place.
+    with tempfile.NamedTemporaryFile(delete=False, suffix=dest.suffix) as tmp:
+        tmp_path = tmp.name
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "pothole-detector-api"})
+        with urllib.request.urlopen(req, timeout=60) as resp, open(tmp_path, "wb") as out:
+            shutil.copyfileobj(resp, out)
+        Path(tmp_path).replace(dest)
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global MODEL, CLASSES, DEVICE
+
     if not Path(MODEL_PATH).exists():
-        raise RuntimeError(
-            f"Model file not found at '{MODEL_PATH}'. Set POTHOLE_MODEL_PATH or include the file in the deployment."
-        )
+        if MODEL_URL:
+            _download_model(MODEL_URL, MODEL_PATH)
+        else:
+            raise RuntimeError(
+                f"Model file not found at '{MODEL_PATH}'. Either include it in the deployment, set POTHOLE_MODEL_PATH, or set POTHOLE_MODEL_URL to download it at startup."
+            )
+
     MODEL, CLASSES, DEVICE = load_model(MODEL_PATH)
     yield
 
