@@ -8,6 +8,8 @@ from pathlib import Path
 import os
 import shutil
 import urllib.request
+import re
+from urllib.parse import urlparse, parse_qs
 
 try:
     import gdown  # type: ignore
@@ -25,6 +27,19 @@ CLASSES = None
 DEVICE = None
 
 
+def _extract_google_drive_file_id(url: str):
+    parsed = urlparse(url)
+    qs = parse_qs(parsed.query)
+    if "id" in qs and qs["id"]:
+        return qs["id"][0]
+
+    match = re.search(r"/d/([a-zA-Z0-9_-]+)", url)
+    if match:
+        return match.group(1)
+
+    return None
+
+
 def _download_model(url: str, destination_path: str) -> None:
     dest = Path(destination_path)
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -38,9 +53,22 @@ def _download_model(url: str, destination_path: str) -> None:
                 "POTHOLE_MODEL_URL looks like a Google Drive link, but 'gdown' is not installed. "
                 "Add gdown to requirements and redeploy."
             )
-        # gdown can take either a share link or a uc?id=... direct link.
-        # It also handles the large-file confirmation flow.
-        gdown.download(url=url, output=str(dest), quiet=False, fuzzy=True)
+        file_id = _extract_google_drive_file_id(url)
+        try:
+            if file_id:
+                gdown.download(id=file_id, output=str(dest), quiet=False)
+            else:
+                # Fallback for uncommon Drive URL formats.
+                gdown.download(url=url, output=str(dest), quiet=False, fuzzy=True)
+        except Exception as exc:
+            raise RuntimeError(
+                "Failed to download model from Google Drive. Ensure the file is shared as 'Anyone with the link (Viewer)'. "
+                "Use POTHOLE_MODEL_URL as https://drive.google.com/uc?export=download&id=<FILE_ID>. "
+                "If Drive quota is exceeded, host the file on another source (Hugging Face/S3/R2)."
+            ) from exc
+
+        if not dest.exists() or dest.stat().st_size == 0:
+            raise RuntimeError("Google Drive download did not produce a valid model file.")
         return
 
     # Download to a temp file first, then move into place.

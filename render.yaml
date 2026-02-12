@@ -7,6 +7,8 @@ services:
     startCommand: uvicorn serve:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.8
       - key: POTHOLE_THRESHOLD
         value: "0.5"
       # If you do not commit best_pothole_model.pth to the repo,
