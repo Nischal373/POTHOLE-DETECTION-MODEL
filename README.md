@@ -180,3 +180,73 @@ pothole_check/
 ## License
 
 This project is open source and available for use.
+
+## Hosting on Render (FastAPI)
+
+This repo already includes a FastAPI service in `serve.py` with:
+- `GET /health`
+- `POST /predict` (multipart file upload)
+
+### Option A (recommended): deploy with Render Blueprint
+
+1. Push this repo to GitHub.
+2. In Render, click **New** → **Blueprint** and select your repo.
+    - Render will read `render.yaml`.
+3. Set environment variable `POTHOLE_MODEL_URL` in Render.
+    - This should be a direct-download link to your `best_pothole_model.pth` (S3/GCS/Azure Blob, etc.).
+    - The API will download the model at startup if it’s not present on disk.
+4. Deploy.
+
+#### Using Google Drive for the model file
+
+1. Upload `best_pothole_model.pth` to Google Drive.
+2. Right click → **Share** → set to **Anyone with the link** (Viewer).
+3. Copy the share link and either:
+     - Paste the share link directly into `POTHOLE_MODEL_URL` (supported), OR
+     - Convert it to a direct link using the file id:
+         - `https://drive.google.com/uc?export=download&id=<FILE_ID>`
+
+Note: Google Drive sometimes shows a “file is too large to scan” confirmation page. This project supports that flow on Render by using `gdown` for Drive links.
+
+The service runs with:
+- Build: `pip install -r requirements.render.txt`
+- Start: `uvicorn serve:app --host 0.0.0.0 --port $PORT`
+
+### Option B: manual Render Web Service setup
+
+1. Push this repo to GitHub.
+2. In Render, click **New** → **Web Service** → connect your repo.
+3. Settings:
+    - Environment: **Python**
+    - Build command: `pip install -r requirements.render.txt`
+    - Start command: `uvicorn serve:app --host 0.0.0.0 --port $PORT`
+4. Add env vars (Render Dashboard → Environment):
+    - `POTHOLE_MODEL_URL` = direct URL to `best_pothole_model.pth`
+    - Optional: `POTHOLE_THRESHOLD` = e.g. `0.5`
+
+### Testing your deployed API
+
+After deploy, your base URL will look like:
+`https://<your-service-name>.onrender.com`
+
+Health check:
+```bash
+curl https://<your-service-name>.onrender.com/health
+```
+
+Predict (upload an image):
+```bash
+curl -X POST https://<your-service-name>.onrender.com/predict \
+  -F "file=@test_img/your_image.jpg"
+```
+
+OpenAPI docs:
+- `https://<your-service-name>.onrender.com/docs`
+
+### Notes
+
+- If you commit `best_pothole_model.pth` into the repo, you can skip `POTHOLE_MODEL_URL`. (Large model files often can’t be pushed to GitHub without LFS.)
+- Recommended for large models: host the `.pth` file somewhere downloadable and set `POTHOLE_MODEL_URL`.
+- This repo’s default [render.yaml](render.yaml) is free-plan friendly and does not use a persistent disk.
+- Optional (paid plans): add a Render disk and set `POTHOLE_MODEL_PATH=/var/data/best_pothole_model.pth` to avoid re-downloading the model after restarts.
+- Free Render instances can sleep when idle; first request after idle may be slow.

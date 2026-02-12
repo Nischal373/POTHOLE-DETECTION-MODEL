@@ -9,6 +9,11 @@ import os
 import shutil
 import urllib.request
 
+try:
+    import gdown  # type: ignore
+except Exception:  # pragma: no cover
+    gdown = None
+
 from predict import load_model, predict_image_with_model
 
 MODEL_PATH = os.getenv("POTHOLE_MODEL_PATH", "best_pothole_model.pth")
@@ -23,6 +28,21 @@ DEVICE = None
 def _download_model(url: str, destination_path: str) -> None:
     dest = Path(destination_path)
     dest.parent.mkdir(parents=True, exist_ok=True)
+
+    url_lower = url.lower()
+    is_google_drive = "drive.google.com" in url_lower or "docs.google.com" in url_lower
+
+    if is_google_drive:
+        if gdown is None:
+            raise RuntimeError(
+                "POTHOLE_MODEL_URL looks like a Google Drive link, but 'gdown' is not installed. "
+                "Add gdown to requirements and redeploy."
+            )
+        # gdown can take either a share link or a uc?id=... direct link.
+        # It also handles the large-file confirmation flow.
+        gdown.download(url=url, output=str(dest), quiet=False, fuzzy=True)
+        return
+
     # Download to a temp file first, then move into place.
     with tempfile.NamedTemporaryFile(delete=False, suffix=dest.suffix) as tmp:
         tmp_path = tmp.name
