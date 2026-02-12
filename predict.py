@@ -8,6 +8,7 @@ from torchvision import transforms, models
 from PIL import Image
 import sys
 from pathlib import Path
+from functools import lru_cache
 
 class PotholeDetector(nn.Module):
     """Pothole detection model using transfer learning."""
@@ -37,7 +38,8 @@ def load_model(model_path="best_pothole_model.pth", device=None):
     """Load the trained model."""
     if device is None:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    
+
+    model_path = str(model_path)
     checkpoint = torch.load(model_path, map_location=device)
     model_name = checkpoint.get('model_name', 'resnet18')
     classes = checkpoint.get('classes', ['no_pothole', 'pothole'])
@@ -48,6 +50,61 @@ def load_model(model_path="best_pothole_model.pth", device=None):
     model.eval()
     
     return model, classes, device
+
+
+@lru_cache(maxsize=16)
+def _get_transform(img_size: int):
+    return transforms.Compose([
+        transforms.Resize((img_size, img_size)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                             std=[0.229, 0.224, 0.225])
+    ])
+
+
+def predict_image_with_model(
+    image_path,
+    model,
+    classes,
+    device,
+    img_size=224,
+    threshold=0.5,
+):
+    """Predict using an already-loaded model (recommended for APIs)."""
+    # Load and preprocess image
+    try:
+        image = Image.open(image_path).convert('RGB')
+    except Exception as e:
+        return {
+            'success': False,
+            'error': f"Error loading image: {str(e)}"
+        }
+
+    transform = _get_transform(int(img_size))
+    image_tensor = transform(image).unsqueeze(0).to(device)
+
+    # Predict
+    with torch.no_grad():
+        outputs = model(image_tensor)
+        probabilities = torch.softmax(outputs, dim=1)
+        confidence, predicted = torch.max(probabilities, 1)
+        confidence = confidence.item()
+        predicted_idx = predicted.item()
+
+    predicted_class = classes[predicted_idx]
+    has_pothole = predicted_class == 'pothole' and confidence >= threshold
+
+    # Get probability for pothole class
+    pothole_prob = probabilities[0][classes.index('pothole')].item() if 'pothole' in classes else 0.0
+
+    return {
+        'success': True,
+        'has_pothole': has_pothole,
+        'predicted_class': predicted_class,
+        'confidence': confidence,
+        'pothole_probability': pothole_prob,
+        'no_pothole_probability': 1.0 - pothole_prob
+    }
 
 def predict_image(image_path, model_path="best_pothole_model.pth", 
                  img_size=224, threshold=0.5):
@@ -63,49 +120,16 @@ def predict_image(image_path, model_path="best_pothole_model.pth",
     Returns:
         dict with prediction results
     """
-    # Load model
+    # Load model (for CLI use). For APIs, prefer predict_image_with_model().
     model, classes, device = load_model(model_path)
-    
-    # Load and preprocess image
-    try:
-        image = Image.open(image_path).convert('RGB')
-    except Exception as e:
-        return {
-            'success': False,
-            'error': f"Error loading image: {str(e)}"
-        }
-    
-    transform = transforms.Compose([
-        transforms.Resize((img_size, img_size)),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], 
-                           std=[0.229, 0.224, 0.225])
-    ])
-    
-    image_tensor = transform(image).unsqueeze(0).to(device)
-    
-    # Predict
-    with torch.no_grad():
-        outputs = model(image_tensor)
-        probabilities = torch.softmax(outputs, dim=1)
-        confidence, predicted = torch.max(probabilities, 1)
-        confidence = confidence.item()
-        predicted_idx = predicted.item()
-    
-    predicted_class = classes[predicted_idx]
-    has_pothole = predicted_class == 'pothole' and confidence >= threshold
-    
-    # Get probability for pothole class
-    pothole_prob = probabilities[0][classes.index('pothole')].item() if 'pothole' in classes else 0.0
-    
-    return {
-        'success': True,
-        'has_pothole': has_pothole,
-        'predicted_class': predicted_class,
-        'confidence': confidence,
-        'pothole_probability': pothole_prob,
-        'no_pothole_probability': 1.0 - pothole_prob
-    }
+    return predict_image_with_model(
+        image_path=image_path,
+        model=model,
+        classes=classes,
+        device=device,
+        img_size=img_size,
+        threshold=threshold,
+    )
 
 def predict_batch(image_dir, model_path="best_pothole_model.pth", 
                  img_size=224, threshold=0.5):
@@ -184,3 +208,4 @@ if __name__ == "__main__":
     print(f"Confidence: {result['confidence']:.2%}")
     print(f"Pothole Probability: {result['pothole_probability']:.2%}")
     print(f"No Pothole Probability: {result['no_pothole_probability']:.2%}")
+    
